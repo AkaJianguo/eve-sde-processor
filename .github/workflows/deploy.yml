@@ -1,0 +1,35 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main  # 确保这与你的主分支名称一致
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # 进入项目目录
+            cd /home/ubuntu/eve-sde-processor
+            
+            # 1. 拉取最新代码
+            git pull origin main
+            
+            # 2. 激活虚拟环境并更新依赖
+            source venv/bin/activate
+            pip install -r requirements.txt
+            
+            # 3. 执行一次增量同步（可选）
+            # python main.py
+            
+            echo "部署完成！"
