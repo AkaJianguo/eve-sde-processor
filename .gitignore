@@ -1,0 +1,7 @@
+# 忽略数据文件和压缩包
+data/
+*.zip
+*.log
+venv/
+__pycache__/
+current_version.txt
