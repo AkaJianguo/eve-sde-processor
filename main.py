@@ -65,6 +65,6 @@ def main():
         os.remove(zip_filename)
         
     print("\n--- 所有静态数据已同步至数据库 ---")
-
+    print("GitHub Actions 部署测试成功！")
 if __name__ == "__main__":
     main()
