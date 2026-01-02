@@ -2,7 +2,7 @@ import json
 import psycopg2
 import os
 from config.settings import DB_CONFIG
-
+import logging # 增加导入
 class SDEImporter:
     def __init__(self):
         """初始化数据库连接"""
@@ -54,7 +54,7 @@ class SDEImporter:
                     cursor.execute(insert_sql, (item_id, json.dumps(record)))
 
             self.conn.commit()
-            print(f"✅ Table [raw.{table_name}]: Import completed.")
+            logging.info(f"✅ Table [raw.{table_name}]: Import completed.")
 
         except Exception as e:
             self.conn.rollback()
