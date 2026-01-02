@@ -89,15 +89,20 @@ def main():
         with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
             zip_ref.extractall(DATA_DIR)
         
-        sde_files = glob.glob(os.path.join(DATA_DIR, "*.jsonl"))
-        logging.info(f"找到 {len(sde_files)} 个文件。开始导入 raw 架构...")
+        # C. 【关键修改】递归查找所有子目录下的 jsonl 文件
+        # 使用 **/*.jsonl 并设置 recursive=True
+        search_pattern = os.path.join(DATA_DIR, "**", "*.jsonl")
+        sde_files = glob.glob(search_pattern, recursive=True)
+        
+        logging.info(f"找到 {len(sde_files)} 个文件。开始导入...")
         
         for file_path in sde_files:
             try:
-                importer.auto_import(file_path)
+                # 【关键修改】使用绝对路径，防止 open() 找不到文件
+                abs_path = os.path.abspath(file_path)
+                importer.auto_import(abs_path)
             except Exception as e:
                 logging.error(f"导入 {file_path} 时发生错误: {e}")
-        
         # 4. 执行加工逻辑
         run_post_processing(importer)
         
