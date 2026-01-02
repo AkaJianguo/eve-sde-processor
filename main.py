@@ -3,68 +3,90 @@ import requests
 import zipfile
 import json
 import glob
-from config.settings import SDE_JSONL_URL, DATA_DIR, DB_CONFIG
+from config.settings import SDE_JSONL_URL, DATA_DIR
 from core.importer import SDEImporter
 
+VERSION_FILE = "current_version.txt"
+
+def get_local_version():
+    if os.path.exists(VERSION_FILE):
+        with open(VERSION_FILE, 'r') as f:
+            return f.read().strip()
+    return None
+
+def save_local_version(build_num):
+    with open(VERSION_FILE, 'w') as f:
+        f.write(str(build_num))
+
 def fetch_latest_build():
-    """获取官方最新的 SDE 构建版本号"""
-    print("正在检查官方最新版本...")
-    response = requests.get(SDE_JSONL_URL)
-    for line in response.text.splitlines():
-        data = json.loads(line)
-        if data.get("_key") == "sde":
-            return data.get("buildNumber")
+    print("Connecting to EVE servers to check SDE version...")
+    try:
+        response = requests.get(SDE_JSONL_URL, timeout=15)
+        response.raise_for_status()
+        for line in response.text.splitlines():
+            data = json.loads(line)
+            if data.get("_key") == "sde":
+                return str(data.get("buildNumber"))
+    except Exception as e:
+        print(f"Version check failed: {e}")
     return None
 
 def main():
-    # 1. 准备工作环境
-    # 确保在 ~/eve-sde-processor 目录下创建 data 文件夹
-    os.makedirs(DATA_DIR, exist_ok=True)
+    # 1. 初始化
     importer = SDEImporter()
+    os.makedirs(DATA_DIR, exist_ok=True)
     
-    # 2. 检查版本并下载
-    build_num = fetch_latest_build()
-    if not build_num:
-        print("错误：无法获取 Build Number")
+    # 2. 版本检查
+    latest_build = fetch_latest_build()
+    local_build = get_local_version()
+    
+    if not latest_build:
+        print("Could not fetch remote version.")
         return
-        
-    zip_filename = f"sde_{build_num}.zip"
-    download_url = f"https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-{build_num}-jsonl.zip"
+
+    if latest_build == local_build:
+        print(f"Local build {local_build} is up to date.")
+        return
     
-    # 如果文件不存在才下载，避免重复下载几百 MB
-    if not os.path.exists(zip_filename):
-        print(f"正在下载 SDE Build {build_num} (约 200MB+)...")
+    print(f"New version detected: {local_build} -> {latest_build}")
+    
+    # 3. 下载与执行
+    zip_filename = f"sde_{latest_build}.zip"
+    download_url = f"https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-{latest_build}-jsonl.zip"
+    
+    try:
+        print(f"Downloading SDE Build {latest_build}...")
         r = requests.get(download_url, stream=True)
         with open(zip_filename, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-    
-    # 3. 解压到 data/ 目录
-    print("正在解压数据到 data/ 目录...")
-    with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
-        zip_ref.extractall(DATA_DIR)
-    
-    # 4. 自动扫描并导入所有 .jsonl
-    # glob 会查找 data 文件夹下所有以 .jsonl 结尾的文件
-    sde_files = glob.glob(os.path.join(DATA_DIR, "*.jsonl"))
-    
-    if not sde_files:
-        print(f"错误：在 {DATA_DIR} 目录中未找到数据文件。请检查解压是否成功。")
-        return
-
-    print(f"共发现 {len(sde_files)} 个数据文件，准备开始全量导入数据库...")
-    
-    for file_path in sde_files:
-        try:
-            importer.auto_import(file_path)
-        except Exception as e:
-            print(f"导入 {file_path} 失败: {e}")
-
-    # 5. 清理压缩包释放空间
-    if os.path.exists(zip_filename):
-        os.remove(zip_filename)
+                
+        print("Extracting data to /data directory...")
+        with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
+            zip_ref.extractall(DATA_DIR)
         
-    print("\n--- 所有静态数据已同步至数据库 ---")
-    print("GitHub Actions 部署测试成功！")
+        sde_files = glob.glob(os.path.join(DATA_DIR, "*.jsonl"))
+        print(f"Found {len(sde_files)} files. Starting database import...")
+        
+        for file_path in sde_files:
+            try:
+                importer.auto_import(file_path)
+            except Exception as e:
+                print(f"Warning: Skipping {file_path} due to error.")
+        
+        save_local_version(latest_build)
+        print(f"--- SDE Update Successful: Build {latest_build} ---")
+
+    except Exception as e:
+        print(f"Critical error during update: {e}")
+        
+    finally:
+        # 4. 清理磁盘
+        if os.path.exists(zip_filename):
+            os.remove(zip_filename)
+        for j_file in glob.glob(os.path.join(DATA_DIR, "*.jsonl")):
+            os.remove(j_file)
+        print("Disk cleanup finished.")
+
 if __name__ == "__main__":
     main()
