@@ -54,11 +54,11 @@ class SDEImporter:
                     cursor.execute(insert_sql, (item_id, json.dumps(record)))
 
             self.conn.commit()
-            logging.info(f"✅ Table [raw.{table_name}]: Import completed.")
+            logging.info(f"✅ Table [raw.{table_name}]: 导入完成。")
 
         except Exception as e:
             self.conn.rollback()
-            print(f"❌ Error importing to raw.{table_name}: {e}")
+            logging.error(f"❌ 导入 raw.{table_name} 失败: {e}")
             raise 
         finally:
             cursor.close()
