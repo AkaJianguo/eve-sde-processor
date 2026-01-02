@@ -16,6 +16,11 @@
 * **处理层 (Process Layer)**：自动执行 `ANALYZE` 优化数据库查询计划，建立 JSONB 表达式索引。
 * **业务层 (Public Layer)**：通过 `scripts/init_views.sql` 自动创建双语视图，将复杂的 JSON 拍平成标准 SQL 表。
 
+
+## 1.1 服务器连接信息 (已更新)
+* **公网弹性 IP**: `18.166.187.236` (已绑定 Elastic IP，重启不会变动)
+* **SSH 用户名**: `ubuntu`
+* **GitHub Secret 变量**: `REMOTE_HOST` 已同步更新。
 ---
 
 ## 2. 目录结构说明
