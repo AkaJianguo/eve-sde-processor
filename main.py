@@ -3,7 +3,7 @@ import requests
 import zipfile
 import json
 import glob
-import logging  # 引入日志模块
+import logging
 from config.settings import SDE_JSONL_URL, DATA_DIR
 from core.importer import SDEImporter
 
@@ -42,6 +42,7 @@ def fetch_latest_build():
     return None
 
 def run_post_processing(importer):
+    """后期加工：执行 ANALYZE 优化查询性能"""
     logging.info("开始数据库后期加工 (ANALYZE)...")
     try:
         with importer.conn.cursor() as cursor:
@@ -53,6 +54,30 @@ def run_post_processing(importer):
         logging.info(f"✅ 后期加工完成：已优化 {len(tables)} 张表。")
     except Exception as e:
         logging.error(f"⚠️ 后期加工失败: {e}")
+        importer.conn.rollback()
+
+def refresh_business_views(importer):
+    """自动执行 SQL 脚本刷新业务视图"""
+    # 脚本路径：scripts/init_views.sql
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", "init_views.sql")
+    
+    if not os.path.exists(script_path):
+        logging.warning(f"跳过视图刷新：找不到脚本文件 {script_path}")
+        return
+
+    logging.info("正在执行 SQL 脚本刷新业务视图...")
+    try:
+        with open(script_path, 'r', encoding='utf-8') as f:
+            sql_script = f.read()
+            
+        with importer.conn.cursor() as cursor:
+            # 执行整个 SQL 脚本内容
+            cursor.execute(sql_script)
+            
+        importer.conn.commit()
+        logging.info("✅ 业务视图 (Public Schema) 已同步刷新。")
+    except Exception as e:
+        logging.error(f"⚠️ 刷新业务视图失败: {e}")
         importer.conn.rollback()
 
 def main():
@@ -89,22 +114,24 @@ def main():
         with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
             zip_ref.extractall(DATA_DIR)
         
-        # C. 【关键修改】递归查找所有子目录下的 jsonl 文件
-        # 使用 **/*.jsonl 并设置 recursive=True
+        # 使用递归查找子目录下所有 jsonl
         search_pattern = os.path.join(DATA_DIR, "**", "*.jsonl")
         sde_files = glob.glob(search_pattern, recursive=True)
         
-        logging.info(f"找到 {len(sde_files)} 个文件。开始导入...")
+        logging.info(f"找到 {len(sde_files)} 个文件。开始导入 raw 架构...")
         
         for file_path in sde_files:
             try:
-                # 【关键修改】使用绝对路径，防止 open() 找不到文件
                 abs_path = os.path.abspath(file_path)
                 importer.auto_import(abs_path)
             except Exception as e:
                 logging.error(f"导入 {file_path} 时发生错误: {e}")
-        # 4. 执行加工逻辑
+        
+        # 4. 执行加工逻辑（性能优化）
         run_post_processing(importer)
+        
+        # 5. 执行视图刷新（业务对齐）
+        refresh_business_views(importer)
         
         save_local_version(latest_build)
         logging.info(f"--- 🚀 SDE 更新圆满成功：版本 {latest_build} ---")
@@ -113,11 +140,12 @@ def main():
         logging.error(f"❌ 更新过程中发生严重错误: {e}")
         
     finally:
-        # 5. 清理磁盘
+        # 6. 清理磁盘
         logging.info("正在执行磁盘清理...")
         if os.path.exists(zip_filename):
             os.remove(zip_filename)
-        for j_file in glob.glob(os.path.join(DATA_DIR, "*.jsonl")):
+        # 递归删除 data 目录下的 jsonl 防止占用空间
+        for j_file in glob.glob(os.path.join(DATA_DIR, "**", "*.jsonl"), recursive=True):
             os.remove(j_file)
         logging.info("清理完成。")
 
