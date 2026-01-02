@@ -44,21 +44,26 @@ def run_post_processing(importer):
     print("Starting database post-processing...")
     try:
         with importer.conn.cursor() as cursor:
-            # 动态获取 raw 架构下所有的表名，并对每一张表执行 ANALYZE
+            # 1. 自动从数据库查出 raw 架构下所有的表名
             cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'raw';")
             tables = cursor.fetchall()
             
+            if not tables:
+                print("No tables found in 'raw' schema to analyze.")
+                return
+
+            # 2. 遍历每一张表执行 ANALYZE
             for table in tables:
                 t_name = table[0]
                 cursor.execute(f"ANALYZE raw.{t_name};")
             
-            print(f"Post-processing: Analyzed {len(tables)} tables in 'raw' schema.")
+            print(f"✅ Post-processing: Analyzed {len(tables)} tables in 'raw' schema.")
+            
         importer.conn.commit()
-        print("✅ Post-processing completed successfully.")
+        print("✅ All post-processing tasks completed successfully.")
     except Exception as e:
         print(f"⚠️ Post-processing failed: {e}")
         importer.conn.rollback()
-
 def main():
     # 1. 初始化
     importer = SDEImporter()
