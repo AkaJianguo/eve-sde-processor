@@ -9,7 +9,7 @@ SELECT
     g.data->'name'->>'zh' AS group_name,
     c.data->'name'->>'zh' AS category_name,
     (t.data->>'volume')::float AS volume
-FROM raw.inv_types t
+FROM raw.types t
 LEFT JOIN raw.inv_groups g ON (t.data->>'groupID')::int = g.id::int
 LEFT JOIN raw.inv_categories c ON (g.data->>'categoryID')::int = c.id::int
 WHERE t.data->>'published' = 'true';
@@ -25,5 +25,5 @@ FROM raw.map_solar_systems s
 LEFT JOIN raw.map_regions r ON (s.data->>'regionID')::int = r.id::int;
 
 -- 3. 性能索引 (建立在 raw 表上，让视图查询变快)
-CREATE INDEX IF NOT EXISTS idx_raw_types_name_zh ON raw.inv_types ((data->'name'->>'zh'));
+CREATE INDEX IF NOT EXISTS idx_raw_types_name_zh ON raw.types ((data->'name'->>'zh'));
 CREATE INDEX IF NOT EXISTS idx_raw_systems_region ON raw.map_solar_systems (((data->>'regionID')::int));

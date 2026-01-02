@@ -44,16 +44,15 @@ def run_post_processing(importer):
     print("Starting database post-processing...")
     try:
         with importer.conn.cursor() as cursor:
-            # ANALYZE 会更新 PostgreSQL 的查询优化器统计信息
-            # 这对于 JSONB 这种大数据量表的查询效率至关重要
-            cursor.execute("ANALYZE raw.inv_types;")
-            cursor.execute("ANALYZE raw.map_solar_systems;")
+            # 动态获取 raw 架构下所有的表名，并对每一张表执行 ANALYZE
+            cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'raw';")
+            tables = cursor.fetchall()
             
-            # 如果你有物化视图（Materialized Views），可以在这里刷新
-            # cursor.execute("REFRESH MATERIALIZED VIEW public.mv_items;")
+            for table in tables:
+                t_name = table[0]
+                cursor.execute(f"ANALYZE raw.{t_name};")
             
-            print("Post-processing: Database stats updated (ANALYZE).")
-            
+            print(f"Post-processing: Analyzed {len(tables)} tables in 'raw' schema.")
         importer.conn.commit()
         print("✅ Post-processing completed successfully.")
     except Exception as e:
