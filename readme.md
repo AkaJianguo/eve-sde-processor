@@ -130,6 +130,60 @@ SELECT attr_name_zh, attr_value FROM v_item_attributes WHERE item_name_zh = '160
 2. **数据安全**：建议定期备份 `current_version.txt` 和 `scripts/` 目录，这两个文件是项目的“灵魂”。
 3. **开发机器人**：在 Python 机器人代码中，直接 `SELECT * FROM public.v_items` 即可获得最干净的数据。
 
+📝 README 增补：腾讯云迁移与故障修复手册
+更新时间：2026-01-05 更新内容：针对从 AWS 迁移至腾讯云过程中遇到的 SQL 路径语法错误及数据库认证问题进行补充。
+
+7. 迁移故障复盘与修复 (Post-Migration Fixes)
+在腾讯云 Ubuntu 22.04 环境部署中，针对 python main.py 报错的两个核心点进行了修复：
+
+7.1 JSONB 字段路径引用错误
+报错现象：column ti.name_zh does not exist。
+
+错误原因：raw 架构下的表（如 raw.types）仅包含 id 和 data 两列。name_zh 并非物理列，而是嵌套在 data (JSONB) 字段中的属性。
+
+正确语法：必须使用 ->> 操作符提取文本。
+
+❌ 错误：ti.name_zh
+
+✅ 正确：ti.data->'name'->>'zh'
+
+7.2 数据库 Peer 认证拦截
+报错现象：FATAL: Peer authentication failed for user "eve_user"。
+
+错误原因：Ubuntu 默认配置要求系统用户名（ubuntu）必须与数据库用户名（eve_user）一致才能直接连接。
+
+解决方法：
+
+本地强制密码模式：添加 -h localhost 参数。
+
+超级用户执行：使用 sudo -u postgres。
+
+8. 腾讯云专用维护指令
+8.1 快速修复/刷新业务视图
+如果修改了 scripts/init_views.sql，请在终端执行以下命令（无需运行全量同步）：
+
+Bash
+
+# 方式一：超级用户直接刷新（推荐）
+sudo -u postgres psql -d eve_sde_db -f scripts/init_views.sql
+
+# 方式二：指定主机名触发密码验证
+psql -h localhost -U eve_user -d eve_sde_db -f scripts/init_views.sql
+8.2 数据一致性检查
+迁移后，请务必执行以下查询以确认业务层是否打通：
+
+SQL
+
+-- 验证星系双语数据
+SELECT name_zh, security FROM public.v_solar_systems WHERE name_en = 'Jita';
+
+-- 验证蓝图关联数据
+SELECT blueprint_name_zh, product_name_zh FROM public.v_blueprints LIMIT 5;
+9. 腾讯云安全组配置建议
+为了确保 GitHub Actions 部署与远程管理顺畅，请在腾讯云控制台确认：
+
+入站规则：放行 TCP:22 (GitHub 部署) 和 TCP:5432 (DataGrip 管理，建议仅对本地 IP 开放)。
+
 ---
 
 > **作者注**：这套系统已经实现了“无人值守”级别。只要 AWS 服务器不关机，您的 EVE 数据库将永远与官方同步。
