@@ -64,14 +64,11 @@ tail -f update.log
 ```
 
 ### 3.3 自动化定时任务
-
-系统已配置 Crontab，每天 **UTC 11:30**（北京时间 19:30）静默运行：
-
+系统已配置 Crontab，每天 **UTC 11:05**（北京时间 19:05）静默运行：
 ```text
-30 11 * * * cd /home/ubuntu/eve-sde-processor && venv/bin/python main.py >> update.log 2>&1
+05 19 * * * cd /home/ubuntu/eve-sde-processor && venv/bin/python main.py >> update.log 2>&1
 
 ```
-
 ---
 
 ## 4. 数据库使用手册 (DataGrip/Navicat)

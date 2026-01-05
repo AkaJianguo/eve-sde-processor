@@ -30,6 +30,6 @@ jobs:
             pip install -r requirements.txt
             
             # 3. 执行一次增量同步（可选）
-            # python main.py
+            python main.py
             
             echo "部署完成！"
