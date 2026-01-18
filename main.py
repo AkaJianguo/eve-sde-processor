@@ -5,7 +5,7 @@ import json
 import glob
 import logging
 import time
-from datetime import datetime, timedelta  # 核心：用于计算精准时间
+from datetime import datetime, timedelta
 from config.settings import SDE_JSONL_URL, DATA_DIR
 from core.importer import SDEImporter
 
@@ -33,6 +33,7 @@ def save_local_version(build_num):
 def fetch_latest_build():
     logging.info("正在连接 EVE 服务器检查 SDE 版本...")
     try:
+        # 这里的 SDE_JSONL_URL 已经在 settings.py 中定义
         response = requests.get(SDE_JSONL_URL, timeout=15)
         response.raise_for_status()
         for line in response.text.splitlines():
@@ -48,6 +49,7 @@ def run_post_processing(importer):
     logging.info("开始数据库后期加工 (ANALYZE)...")
     try:
         with importer.conn.cursor() as cursor:
+            # 这里的 importer.conn 对应 SDEImporter 里的连接
             cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'raw';")
             tables = cursor.fetchall()
             for table in tables:
@@ -60,10 +62,12 @@ def run_post_processing(importer):
 
 def refresh_business_views(importer):
     """自动执行 SQL 脚本刷新业务视图"""
+    # 路径对齐：确保指向 Docker 容器内的脚本位置
     script_path = os.path.join(os.path.dirname(__file__), "scripts", "init_views.sql")
     if not os.path.exists(script_path):
         logging.warning(f"跳过视图刷新：找不到脚本文件 {script_path}")
         return
+    
     logging.info("正在执行 SQL 脚本刷新业务视图...")
     try:
         with open(script_path, 'r', encoding='utf-8') as f:
@@ -81,13 +85,11 @@ def perform_update_task():
     importer = None
     zip_filename = None
     try:
-        importer = SDEImporter()
-        os.makedirs(DATA_DIR, exist_ok=True)
+        # 1. 检查版本
         latest_build = fetch_latest_build()
         local_build = get_local_version()
         
         if not latest_build:
-            logging.warning("未能获取到远程版本号，跳过更新。")
             return
 
         if latest_build == local_build:
@@ -95,67 +97,77 @@ def perform_update_task():
             return
         
         logging.info(f"检测到新版本: {local_build if local_build else 'None'} -> {latest_build}")
+        
+        # 2. 只有在确定要更新时才初始化数据库连接，节省资源
+        importer = SDEImporter()
+        os.makedirs(DATA_DIR, exist_ok=True)
+        
+        # 3. 下载
         zip_filename = f"sde_{latest_build}.zip"
         download_url = f"https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-{latest_build}-jsonl.zip"
         
         logging.info(f"正在下载 SDE 构建版本 {latest_build}...")
-        r = requests.get(download_url, stream=True)
-        with open(zip_filename, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(zip_filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
                 
-        logging.info("正在解压数据到 /data 目录...")
+        # 4. 解压
+        logging.info("正在解压数据...")
         with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
             zip_ref.extractall(DATA_DIR)
         
+        # 5. 遍历导入
         search_pattern = os.path.join(DATA_DIR, "**", "*.jsonl")
         sde_files = glob.glob(search_pattern, recursive=True)
         for file_path in sde_files:
+            # 调用整合后带批量导入功能的 auto_import
             importer.auto_import(os.path.abspath(file_path))
         
+        # 6. 后期维护
         run_post_processing(importer)
         refresh_business_views(importer)
+        
+        # 7. 更新本地版本锁
         save_local_version(latest_build)
         logging.info(f"--- 🚀 SDE 更新圆满成功：版本 {latest_build} ---")
 
     except Exception as e:
         logging.error(f"❌ 更新过程中发生严重错误: {e}")
     finally:
-        logging.info("正在执行清理工作...")
+        # 清理工作
         if zip_filename and os.path.exists(zip_filename):
             os.remove(zip_filename)
+        # 清理遗留的 jsonl 文件
         for j_file in glob.glob(os.path.join(DATA_DIR, "**", "*.jsonl"), recursive=True):
-            os.remove(j_file)
-        if importer and hasattr(importer, 'conn'):
-            importer.conn.close()
-            logging.info("数据库连接已释放。")
+            try: os.remove(j_file)
+            except: pass
+        
+        # 显式关闭数据库连接
+        if importer:
+            importer.close()
 
 def main():
     logging.info("🚀 EVE SDE 自动更新守护进程已启动 (定时模式：每日 19:00)...")
     
-    # 第一次启动时是否立刻执行一次检查？
-    # 建议：如果 local_build 为 None (初次部署)，则立刻跑一次
+    # 首次启动：如果没有版本记录，立刻执行一次
     if get_local_version() is None:
-        logging.info("首次部署，执行初始数据导入...")
+        logging.info("首次部署，检测到无本地版本记录，立刻执行初始数据导入...")
         perform_update_task()
 
     while True:
-        # 1. 计算距离下一个 19:00 的秒数
         now = datetime.now()
         target = now.replace(hour=19, minute=0, second=0, microsecond=0)
         
-        # 如果当前已经过了 19:00，则目标是明天的 19:00
         if now >= target:
             target += timedelta(days=1)
             
         sleep_seconds = (target - now).total_seconds()
+        logging.info(f"☕ 进入等待模式。下次检查：{target.strftime('%Y-%m-%d %H:%M:%S')} (约 {round(sleep_seconds/3600, 2)} 小时后)")
         
-        logging.info(f"☕ 进入等待模式。下次检查时间：{target.strftime('%Y-%m-%d %H:%M:%S')} (约 {round(sleep_seconds/3600, 2)} 小时后)")
-        
-        # 2. 休眠直到目标时间
         time.sleep(sleep_seconds)
         
-        # 3. 执行任务
         logging.info("⏰ 到达预定时间，开始执行更新任务...")
         perform_update_task()
 

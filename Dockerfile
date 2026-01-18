@@ -1,20 +1,36 @@
-# 使用成熟稳定的 Python 3.11 版本
+# 使用 Python 3.11-slim 保持生产环境稳定
 FROM python:3.11-slim
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Shanghai \
+    DATA_DIR=/app/data
 
 WORKDIR /app
 
-# 安装 PostgreSQL 客户端库等必要依赖
+# 1. 安装系统依赖 (libpq-dev 用于 PostgreSQL 连接)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制并安装依赖
-COPY requirements.txt .
+# 2. 准备目录与用户安全
+# 创建数据存放目录和脚本目录，并添加非 root 用户
+RUN mkdir -p /app/data /app/scripts && \
+    useradd -m eveuser && \
+    chown -R eveuser:eveuser /app
+
+# 3. 安装 Python 依赖
+COPY --chown=eveuser:eveuser requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制所有代码
-COPY . .
+# 4. 复制项目文件
+COPY --chown=eveuser:eveuser . .
 
-# 启动命令：确保 main.py 是你的入口文件
+# 切换到安全用户
+USER eveuser
+
+# 启动守护进程
 CMD ["python", "main.py"]
