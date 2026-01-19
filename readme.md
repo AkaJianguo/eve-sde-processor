@@ -1,59 +1,127 @@
-# EVE SDE Processor Docker 运维手册
+这份手册已根据我们最近在 `eve_sde_db` 上的调试成果进行了优化，特别是修正了视图刷新的命令格式、增加了物化视图的维护逻辑，并同步了单人维护所需的“工程落地”细节。
 
-适用于使用 `docker-compose.yml` 运行的最小化部署（PostgreSQL + SDE 处理器）。覆盖环境准备、启动、手动同步、备份与故障排查。
+---
+
+# EVE SDE Processor 运维与开发手册 (v2.0)
+
+本手册适用于基于 Docker 部署的 EVE SDE 数据底座，重点保障 **FastAPI 后端数据读取性能**与**自动化同步**。
 
 ## 1. 组成与持久化
-- 数据库：PostgreSQL 15（容器名 `eve_db`），数据持久化挂载到 `./postgres_data`。
-- SDE 处理器：自建镜像（容器名 `eve_sde_worker`），代码位于 `./eve-sde-processor`，数据目录挂载为 `./data`。
-- 时区：挂载宿主 `/etc/localtime` 和 `/etc/timezone` 保持时间一致。
-- 网络：自定义 bridge `eve_net`，数据库端口仅绑定 `127.0.0.1:5432`，外部无法直接访问。
 
-目录约定（宿主机）：
-```
-./data           # SDE 下载/解压/版本文件 current_version.txt
-./postgres_data  # PostgreSQL 数据目录
-./.env           # 环境变量文件（需自行创建）
-./docker-compose.yml
-./eve-sde-processor
-```
+* **数据库**：PostgreSQL 15 (容器 `eve_db`)，持久化于 `./postgres_data`。
+* **处理器**：`eve_sde_worker`，处理 SDE 下载、解压及 `raw` 架构下的数据导入。
+* **业务层**：`public` 架构下的视图与物化视图，专供 FastAPI 业务逻辑调用。
 
-## 2. 环境变量 (.env 示例)
-```
-DB_USER=eve_admin
-DB_PASSWORD=your_password
-DB_NAME=eve_sde_db
-# 供 sde-processor 使用的数据库 URL
-DATABASE_URL=postgresql://eve_admin:your_password@db:5432/eve_sde_db
+目录约定：
+
+```text
+/opt/EVE-Project
+├── data                       # SDE 原始文件与版本记录 (current_version.txt)
+├── postgres_data              # 数据库二进制文件
+├── .env                       # 核心环境变量
+├── docker-compose.yml
+└── eve-sde-processor          # 处理器源码与脚本目录
+    └── scripts/init_views.sql # 核心业务视图定义
+
 ```
 
-## 3. 启动与日常操作
-- 构建并启动：`docker compose up -d`
-- 查看状态：`docker compose ps`
-- 查看日志：`docker compose logs -f sde-processor` 或 `docker compose logs -f db`
-- 停止：`docker compose down`
+## 2. 环境变量 (.env)
 
-## 4. 手动同步与刷新
-- 强制全量同步（忽略已记录版本）：
-	1) 删除宿主机 `data/current_version.txt`（若存在）。
-	2) 执行 `docker compose exec sde-processor python main.py`。
-- 只刷新视图（修改了 `scripts/init_views.sql` 时）：
-	`docker compose exec db psql -U ${DB_USER} -d ${DB_NAME} -f scripts/init_views.sql`
+```bash
+POSTGRES_USER=eve_admin
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_DB=eve_sde_db
+# FastAPI 与 Worker 内部通信 Token
+INTERNAL_TOKEN=b6d8f2a4e9c1b7a0d5e8f3c2b1a9d0e7f4c2b1a5d6e8f9c0
 
-## 5. 数据库访问（宿主机）
-- 本地 psql 连接：`psql -h 127.0.0.1 -U ${DB_USER} -d ${DB_NAME}`
-- GUI (DataGrip/Navicat) 连接：主机 127.0.0.1，端口 5432，账户同上；建议仅在本机访问，不暴露公网。
+```
 
-## 6. 备份与恢复
-- 备份：`docker compose exec db pg_dump -U ${DB_USER} -d ${DB_NAME} > backup.sql`
-- 恢复：`cat backup.sql | docker compose exec -T db psql -U ${DB_USER} -d ${DB_NAME}`
+---
 
-## 7. 故障排查速查表
-- 容器起不来：检查 `.env` 是否存在且变量齐全；确认端口 5432 未被占用。
-- SDE 不更新：查看 `docker compose logs -f sde-processor`，必要时删除 `data/current_version.txt` 后重跑同步。
-- DB 连接被拒绝：确保连接主机为 `127.0.0.1`，并检查 `.env` 中用户名/密码与数据库初始用户一致。
-- 时间不一致：确认宿主 `/etc/localtime` `/etc/timezone` 是否存在且已挂载。
+## 3. 核心运维指令
 
-## 8. 日常巡检建议
-- 每日：`docker compose ps` 确认状态；检查 `sde-processor` 日志是否完成当日同步。
-- 每周：`du -sh postgres_data data` 查看磁盘占用；按需清理过期备份。
-- 变更后：修改 `scripts/init_views.sql` 或核心逻辑，先在测试环境跑一遍 `docker compose exec sde-processor python main.py` 观察日志，再应用生产。
+### A. 启动与日志
+
+* **全量启动**：`docker compose up -d`
+* **监控同步进度**：`docker compose logs -f eve_sde_worker`
+* **重启数据库**：`docker compose restart eve_db`
+
+### B. 视图刷新（重要：业务逻辑变更后必跑）
+
+当修改了 `init_views.sql` 或需要强制重算市场树（2092 条数据）时执行：
+
+```bash
+# 切换到项目根目录
+cd /opt/EVE-Project
+
+# 使用容器内变量执行刷入，确保类型转换全绿通过
+docker exec -i eve_db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB' < ./eve-sde-processor/scripts/init_views.sql
+
+```
+
+### C. 数据一致性抽查
+
+```bash
+# 检查市场分类树数量（预期应 > 2000）
+docker exec -it eve_db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM public.market_menu_tree;"'
+
+# 检查蓝图制造视图是否正常（验证类型对齐）
+docker exec -it eve_db sh -c 'psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT blueprint_id, product_name_zh FROM v_blueprints LIMIT 5;"'
+
+```
+
+---
+
+## 4. 备份与恢复（单人维护保障）
+
+| 场景 | 命令 |
+| --- | --- |
+| **快速备份** | `docker exec eve_db pg_dump -U eve_admin -d eve_sde_db > sde_backup_$(date +%F).sql` |
+| **全量恢复** | `cat sde_backup_xxx.sql |
+| **清理缓存** | `rm data/current_version.txt` (删除后重启 Worker 将触发全量重新导入) |
+
+---
+
+## 5. 开发联调说明
+
+### 视图层 (PostgreSQL)
+
+* **`v_items`**：基础物品属性，已处理 `text` 到 `float/int` 的类型转换。
+* **`market_menu_tree`**：物化视图，存储 2000+ 条分类索引。
+* **`v_blueprints`**：已修复 `text = integer` 冲突，支持直接查询制造产出。
+
+### 业务层 (FastAPI)
+
+* **高性能树形构建**：后端应读取 `market_menu_tree` 并在内存中使用字典映射（O(n) 复杂度）构建 JSON 树。
+* **缓存刷新钩子**：Worker 同步完成后，应调用 FastAPI 的 `/internal/refresh-cache` 接口（带 `INTERNAL_TOKEN`）清理后端 `lru_cache`。
+
+---
+
+## 6. 常见故障处理
+
+* **`operator does not exist: text = integer`**：
+* 原因：视图中 ID 匹配未做显式类型转换。
+* 修复：检查 `init_views.sql`，确保 ID 匹配使用了 `id::text = (path)::text` 或两边统一转为 `::int`。
+
+
+* **`database "xxx" does not exist`**：
+* 原因：脚本内硬编码了数据库名。
+* 修复：使用 `psql -d $POSTGRES_DB` 动态调用环境变量。
+
+
+* **市场菜单显示为空**：
+* 原因：物化视图未刷新。
+* 修复：执行 `REFRESH MATERIALIZED VIEW public.market_menu_tree;`。
+
+
+
+---
+
+## 7. 巡检周期建议
+
+1. **每周一 10:00**：手动或通过 Cron 检查 `sde-processor` 是否获取到官方 SDE 新版本。
+2. **变更后**：任何数据库结构的改动，必须确保 `v_blueprints` 视图能正常 LIMIT 出结果，否则后端计算蓝图成本会报错。
+
+---
+
+**目前手册内容已覆盖你遇到的所有坑点。需要我帮你把这个 README 的内容直接通过代码或脚本形式保存到你的服务器对应目录下吗？**
