@@ -1,9 +1,8 @@
 -- ========================================================
--- EVE SDE 终极业务视图脚本 (v2.6 修正版)
--- 修复：ti.name_zh 路径错误
+-- EVE SDE 终极业务视图脚本 (v3.0 统一架构版)
+-- 适用范围：FastAPI 后端高效读取 & 自动化刷新
 -- ========================================================
 
--- 确保后续操作在 public 架构中
 CREATE SCHEMA IF NOT EXISTS public;
 SET search_path TO public;
 
@@ -38,60 +37,54 @@ FROM raw.map_solar_systems s
 LEFT JOIN raw.map_regions r ON (s.data->>'regionID')::int = r.id::int
 LEFT JOIN raw.map_constellations cn ON (s.data->>'constellationID')::int = cn.id::int;
 
--- 3. 蓝图与制造视图 (v_blueprints) - 已修复 ti.name_zh 错误
+-- 3. 蓝图与制造视图 (v_blueprints)
 CREATE OR REPLACE VIEW v_blueprints AS
 SELECT 
     b.id::int AS blueprint_id,
-    ti.data->'name'->>'zh' AS blueprint_name_zh, -- 修正：从 data 字段提取
+    ti.data->'name'->>'zh' AS blueprint_name_zh,
     (b.data->'activities'->'manufacturing'->'products'->0->>'typeID')::int AS product_id,
-    (SELECT data->'name'->>'zh' FROM raw.types WHERE id = b.data->'activities'->'manufacturing'->'products'->0->>'typeID') AS product_name_zh,
+    (SELECT data->'name'->>'zh' FROM raw.types WHERE id = (b.data->'activities'->'manufacturing'->'products'->0->>'typeID')::int) AS product_name_zh,
     (b.data->'activities'->'manufacturing'->'products'->0->>'quantity')::int AS product_quantity,
     (b.data->'activities'->'manufacturing'->>'time')::int AS prod_time_seconds,
     b.data->'activities'->'manufacturing'->'materials' AS materials_json
 FROM raw.blueprints b
 LEFT JOIN raw.types ti ON b.id = ti.id;
 
--- 4. 装备属性视图 (v_item_attributes)
-CREATE OR REPLACE VIEW v_item_attributes AS
+-- 4. 市场分类树物化视图 (market_menu_tree)
+-- [重要]：改为物化视图以支撑 FastAPI 高频递归查询
+DROP MATERIALIZED VIEW IF EXISTS public.market_menu_tree;
+CREATE MATERIALIZED VIEW public.market_menu_tree AS
 SELECT 
-    t.id::int AS item_id,
-    t.data->'name'->>'zh' AS item_name_zh,
-    da.data->'name'->>'en' AS attr_name_en,
-    da.data->'name'->>'zh' AS attr_name_zh,
-    (attr->>'value')::float AS attr_value
-FROM raw.types t,
-LATERAL jsonb_array_elements(t.data->'dogmaAttributes') AS attr
-LEFT JOIN raw.dogma_attributes da ON (attr->>'attributeID')::int = da.id::int;
-
--- 5. 市场分类视图 (v_market_structure)
-CREATE OR REPLACE VIEW v_market_structure AS
-SELECT 
-    m.id::int AS market_group_id,
-    m.data->'name'->>'zh' AS name_zh,
-    m.data->'name'->>'en' AS name_en,
-    (m.data->>'parentGroupID')::int AS parent_id
-FROM raw.market_groups m;
-
--- ========================================================
--- 性能优化
--- ========================================================
-CREATE INDEX IF NOT EXISTS idx_raw_types_name_zh ON raw.types ((data->'name'->>'zh'));
-CREATE INDEX IF NOT EXISTS idx_raw_types_name_en ON raw.types ((data->'name'->>'en'));
-CREATE INDEX IF NOT EXISTS idx_raw_systems_name_zh ON raw.map_solar_systems ((data->'name'->>'zh'));
-CREATE INDEX IF NOT EXISTS idx_raw_systems_name_en ON raw.map_solar_systems ((data->'name'->>'en'));
-CREATE INDEX IF NOT EXISTS idx_raw_types_group_id ON raw.types (((data->>'groupID')::int));
-
--- 6. 市场树形菜单物化视图 (market_menu_tree)
-CREATE MATERIALIZED VIEW IF NOT EXISTS public.market_menu_tree AS
-SELECT 
-    (data->>'marketGroupID')::int AS id,
+    id::int AS id,
     (data->>'parentGroupID')::int AS parent_id,
     data->'name'->>'zh' AS name_zh,
-    (data->>'iconID')::int AS icon_id
-FROM raw.inv_market_groups
+    (data->>'iconID')::int AS icon_id,
+    (data->>'hasTypes')::boolean AS has_types
+FROM raw.market_groups
 ORDER BY id;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_market_menu_id ON public.market_menu_tree(id);
 CREATE INDEX IF NOT EXISTS idx_market_menu_parent ON public.market_menu_tree(parent_id);
 
+-- 5. 物品组与大类物化视图 (用于属性过滤与搜索)
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.view_item_categories AS
+SELECT id::int AS id, data->'name'->>'zh' AS name_zh FROM raw.categories;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.view_item_groups AS
+SELECT id::int AS id, (data->>'categoryID')::int AS category_id, data->'name'->>'zh' AS name_zh FROM raw.groups;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v_cat_id ON public.view_item_categories(id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v_grp_id ON public.view_item_groups(id);
+
+-- ========================================================
+-- 自动化刷新逻辑与性能优化
+-- ========================================================
+
+-- 刷新物化视图数据 (确保 main.py 调用此脚本后数据是最新的)
 REFRESH MATERIALIZED VIEW public.market_menu_tree;
+REFRESH MATERIALIZED VIEW public.view_item_categories;
+REFRESH MATERIALIZED VIEW public.view_item_groups;
+
+-- 索引优化
+CREATE INDEX IF NOT EXISTS idx_raw_types_name_zh ON raw.types ((data->'name'->>'zh'));
+CREATE INDEX IF NOT EXISTS idx_raw_types_group_id ON raw.types (((data->>'groupID')::int));

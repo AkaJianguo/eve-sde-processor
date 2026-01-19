@@ -11,7 +11,7 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "eve_sde_db")
 DB_USER = os.getenv("DB_USER", "eve_admin")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
-
+API_SECRET_KEY = "b6d8f2a4e9c1b7a0d5e8f3c2b1a9d0e7f4c2b1a5d6e8f9c0"
 # 数据库连接字典
 DB_CONFIG = {
     "host": DB_HOST,
