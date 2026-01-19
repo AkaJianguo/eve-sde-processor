@@ -76,6 +76,7 @@ def refresh_business_views(importer):
             cursor.execute(sql_script)
         importer.conn.commit()
         logging.info("✅ 业务视图 (Public Schema) 已同步刷新。")
+        logging.info("✅ 市场菜单视图 market_menu_tree 已刷新完成。")
     except Exception as e:
         logging.error(f"⚠️ 刷新业务视图失败: {e}")
         importer.conn.rollback()

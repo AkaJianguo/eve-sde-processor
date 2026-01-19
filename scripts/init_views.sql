@@ -80,3 +80,18 @@ CREATE INDEX IF NOT EXISTS idx_raw_types_name_en ON raw.types ((data->'name'->>'
 CREATE INDEX IF NOT EXISTS idx_raw_systems_name_zh ON raw.map_solar_systems ((data->'name'->>'zh'));
 CREATE INDEX IF NOT EXISTS idx_raw_systems_name_en ON raw.map_solar_systems ((data->'name'->>'en'));
 CREATE INDEX IF NOT EXISTS idx_raw_types_group_id ON raw.types (((data->>'groupID')::int));
+
+-- 6. 市场树形菜单物化视图 (market_menu_tree)
+CREATE MATERIALIZED VIEW IF NOT EXISTS public.market_menu_tree AS
+SELECT 
+    (data->>'marketGroupID')::int AS id,
+    (data->>'parentGroupID')::int AS parent_id,
+    data->'name'->>'zh' AS name_zh,
+    (data->>'iconID')::int AS icon_id
+FROM raw.inv_market_groups
+ORDER BY id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_market_menu_id ON public.market_menu_tree(id);
+CREATE INDEX IF NOT EXISTS idx_market_menu_parent ON public.market_menu_tree(parent_id);
+
+REFRESH MATERIALIZED VIEW public.market_menu_tree;
