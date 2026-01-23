@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 数据库配置 ---
-# 默认 host 设为 'db'，对应 docker-compose 中的服务名
-DB_HOST = os.getenv("DB_HOST", "db") 
+# Docker Compose 中的数据库服务名为 'ruoyi-pg'，在 docker-compose.yml 中定义
+DB_HOST = os.getenv("DB_HOST", "eve-pg")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "eve_sde_db")
 DB_USER = os.getenv("DB_USER", "eve_admin")

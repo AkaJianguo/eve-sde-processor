@@ -13,7 +13,8 @@ from core.importer import SDEImporter
 # 配置与常量 (建议同步更新 settings.py)
 # ==========================================
 # FastAPI 缓存刷新接口地址 (根据你的 Docker 网络或域名调整)
-API_REFRESH_URL = os.getenv("API_REFRESH_URL", "http://fastapi-app:8000/internal/refresh-market-cache")
+# Docker 内部使用服务名，本地开发时使用 localhost
+API_REFRESH_URL = os.getenv("API_REFRESH_URL", "http://eve-backend-pg:9099/docker-api/internal/refresh-market-cache")
 
 VERSION_FILE = os.path.join(DATA_DIR, "current_version.txt")
 
